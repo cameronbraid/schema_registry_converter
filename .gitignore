@@ -2,3 +2,5 @@
 Cargo.lock
 .idea
 **/*.iml
+.vscode/.history
+.vscode/settings.json
