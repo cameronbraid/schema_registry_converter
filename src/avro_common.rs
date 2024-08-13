@@ -84,9 +84,11 @@ pub(crate) fn replace_reference(parent: value::Value, child: value::Value) -> va
     match name {
         Some(v) => match namespace {
             Some(u) => {
-                let key = format!(".{}.{}", u, v);
-                replace_values.insert(key.clone(), key);
-                if parent["namespace"].as_str() == namespace {
+              let key = format!(".{}.{}", u, v);
+              replace_values.insert(key.clone(), key);
+              let key = format!("{}.{}", u, v);
+              replace_values.insert(key.clone(), key);
+            if parent["namespace"].as_str() == namespace {
                     replace_values.insert(String::from(v), String::from(v));
                 }
             }
@@ -155,8 +157,8 @@ pub(crate) fn item_to_bytes(
 
 pub(crate) fn get_name(schema: &Schema) -> Option<Name> {
     match schema {
-        Schema::Record(schema) => Some(schema.name.clone()),
-        _ => None,
+      Schema::Record(schema) => Some(schema.name.clone()),
+      _ => None,
     }
 }
 
