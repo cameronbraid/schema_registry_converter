@@ -35,7 +35,8 @@ use serde::ser::Serialize;
 use serde_json::value;
 
 use crate::async_impl::schema_registry::{
-    get_referenced_schema, get_schema_by_id_and_type, get_schema_by_subject, SrSettings,
+    get_dereferenced_schema_by_id, get_referenced_schema, get_schema_by_id_and_type,
+    get_schema_by_subject, SrSettings,
 };
 use crate::avro_common::{
     get_name, item_to_bytes, replace_reference, values_to_bytes, AvroSchema, DecodeResult,
@@ -611,13 +612,47 @@ async fn to_avro_schema(
             raw: registered_schema.schema,
             parsed,
         })),
-        Err(e) => Err(SRCError::non_retryable_with_cause(
-            e,
-            &format!(
-                "Supplied raw value {:?} cant be turned into a Schema",
-                registered_schema.schema
-            ),
-        )),
+        Err(_) => {
+            // Schema parse failed, likely due to unresolved references.
+            // Try fetching a dereferenced schema from the Apicurio v3 native API.
+            match get_dereferenced_schema_by_id(registered_schema.id, sr_settings).await {
+                Ok(deref_schema) => {
+                    let deref_json: value::Value =
+                        serde_json::from_str(&deref_schema.schema).map_err(|e| {
+                            SRCError::non_retryable_with_cause(
+                                e,
+                                "failed to parse dereferenced Avro schema JSON",
+                            )
+                        })?;
+                    match Schema::parse(&deref_json) {
+                        Ok(parsed) => Ok(Arc::new(AvroSchema {
+                            id: registered_schema.id,
+                            raw: deref_schema.schema,
+                            parsed,
+                        })),
+                        Err(e) => Err(SRCError::non_retryable_with_cause(
+                            e,
+                            &format!(
+                                "Dereferenced schema still cant be turned into a Schema: {:?}",
+                                deref_schema.schema
+                            ),
+                        )),
+                    }
+                }
+                Err(_) => {
+                    // Dereference fallback also failed, return the original parse error
+                    let main_schema: value::Value =
+                        serde_json::from_str(&registered_schema.schema).unwrap();
+                    Err(SRCError::non_retryable_with_cause(
+                        Schema::parse(&main_schema).unwrap_err(),
+                        &format!(
+                            "Supplied raw value {:?} cant be turned into a Schema",
+                            registered_schema.schema
+                        ),
+                    ))
+                }
+            }
+        }
     }
 }
 

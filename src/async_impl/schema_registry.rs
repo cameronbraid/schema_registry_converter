@@ -67,6 +67,14 @@ impl SrSettings {
     pub(crate) fn url(&self) -> &str {
         &self.urls[0]
     }
+
+    pub(crate) fn client(&self) -> &Client {
+        &self.client
+    }
+
+    pub(crate) fn authorization(&self) -> &SrAuthorization {
+        &self.authorization
+    }
 }
 
 /// Builder for SrSettings
@@ -197,6 +205,54 @@ pub async fn get_schema_by_id(
     raw_to_registered_schema(raw_schema, Option::from(id)).await
 }
 
+/// Fetches a schema by globalId from the Apicurio Registry v3 native API with all references
+/// dereferenced (inlined). This is useful when the ccompat API doesn't properly resolve references.
+/// The base_url should be the Apicurio v3 native API base, e.g. "http://host:8080/apis/registry/v3"
+pub async fn get_dereferenced_schema_by_id(
+    id: u32,
+    sr_settings: &SrSettings,
+) -> Result<RegisteredSchema, SRCError> {
+    let base_url = sr_settings.url();
+    // Derive the v3 native API URL from the ccompat URL
+    // e.g. "http://host:8080/apis/ccompat/v7" -> "http://host:8080/apis/registry/v3"
+    let v3_base = if let Some(pos) = base_url.find("/apis/") {
+        format!("{}/apis/registry/v3", &base_url[..pos])
+    } else {
+        // If we can't derive it, fall back to appending /apis/registry/v3
+        format!("{}/apis/registry/v3", base_url.trim_end_matches('/'))
+    };
+    let url = format!("{}/ids/globalIds/{}?references=DEREFERENCE", v3_base, id);
+    let builder = sr_settings.client().get(&url);
+    let call = apply_authentication(builder, sr_settings.authorization()).await;
+    match call {
+        Ok(response) => {
+            if !response.status().is_success() {
+                return Err(SRCError::non_retryable_without_cause(&format!(
+                    "Apicurio v3 dereference call failed with status {} for globalId {}",
+                    response.status(),
+                    id
+                )));
+            }
+            match response.text().await {
+                Ok(schema) => Ok(RegisteredSchema {
+                    id,
+                    schema_type: SchemaType::Avro,
+                    schema,
+                    references: vec![], // already dereferenced, no references to resolve
+                }),
+                Err(e) => Err(SRCError::non_retryable_with_cause(
+                    e,
+                    "could not read response body from Apicurio v3 dereference endpoint",
+                )),
+            }
+        }
+        Err(e) => Err(SRCError::retryable_with_cause(
+            e,
+            "http call to Apicurio v3 dereference endpoint failed",
+        )),
+    }
+}
+
 pub async fn get_schema_by_id_and_type(
     id: u32,
     sr_settings: &SrSettings,
@@ -266,7 +322,7 @@ async fn raw_to_registered_schema(
         Some(v) => v,
         None => {
             return Err(SRCError::non_retryable_without_cause(
-                "Could not get raw schema from response",
+                &format!("Could not get raw schema from response for schema id {id}"),
             ));
         }
     };
