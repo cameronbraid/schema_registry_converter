@@ -35,11 +35,20 @@ fn might_replace(
     val: value::Value,
     child: &value::Value,
     replace_values: &DashMap<String, String>,
+    replaced: &DashMap<String, bool>,
 ) -> value::Value {
     match val {
-        value::Value::Object(v) => replace_in_map(v, child, replace_values),
-        value::Value::Array(v) => replace_in_array(&v, child, replace_values),
-        value::Value::String(s) if replace_values.contains_key(&*s) => child.clone(),
+        value::Value::Object(v) => replace_in_map(v, child, replace_values, replaced),
+        value::Value::Array(v) => replace_in_array(&v, child, replace_values, replaced),
+        value::Value::String(s) if replace_values.contains_key(&*s) => {
+            if replaced.contains_key(&*s) {
+                // Already replaced once, keep as name reference
+                value::Value::String(s)
+            } else {
+                replaced.insert(s.clone(), true);
+                child.clone()
+            }
+        }
         p => p,
     }
 }
@@ -48,11 +57,12 @@ fn replace_in_array(
     parent_array: &[value::Value],
     child: &value::Value,
     replace_values: &DashMap<String, String>,
+    replaced: &DashMap<String, bool>,
 ) -> value::Value {
     value::Value::Array(
         parent_array
             .iter()
-            .map(|v| might_replace(v.clone(), child, replace_values))
+            .map(|v| might_replace(v.clone(), child, replace_values, replaced))
             .collect(),
     )
 }
@@ -61,6 +71,7 @@ fn replace_in_map(
     parent_map: Map<String, value::Value>,
     child: &value::Value,
     replace_values: &DashMap<String, String>,
+    replaced: &DashMap<String, bool>,
 ) -> value::Value {
     value::Value::Object(
         parent_map
@@ -68,7 +79,7 @@ fn replace_in_map(
             .map(|e| {
                 (
                     e.0.clone(),
-                    might_replace(e.1.clone(), child, replace_values),
+                    might_replace(e.1.clone(), child, replace_values, replaced),
                 )
             })
             .collect(),
@@ -88,9 +99,9 @@ pub(crate) fn replace_reference(parent: value::Value, child: value::Value) -> va
               replace_values.insert(key.clone(), key);
               let key = format!("{}.{}", u, v);
               replace_values.insert(key.clone(), key);
-            if parent["namespace"].as_str() == namespace {
-                    replace_values.insert(String::from(v), String::from(v));
-                }
+              // Always add short name - needed for nested references where the
+              // containing record's namespace matches but the top-level doesn't
+              replace_values.insert(String::from(v), String::from(v));
             }
             None => {
                 replace_values.insert(String::from(v), String::from(v));
@@ -98,9 +109,10 @@ pub(crate) fn replace_reference(parent: value::Value, child: value::Value) -> va
         },
         None => return parent,
     };
+    let replaced: DashMap<String, bool> = DashMap::new();
     match parent {
-        value::Value::Object(v) => replace_in_map(v, &child, &replace_values),
-        value::Value::Array(v) => replace_in_array(&v, &child, &replace_values),
+        value::Value::Object(v) => replace_in_map(v, &child, &replace_values, &replaced),
+        value::Value::Array(v) => replace_in_array(&v, &child, &replace_values, &replaced),
         p => p,
     }
 }

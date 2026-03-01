@@ -639,15 +639,16 @@ async fn to_avro_schema(
                         )),
                     }
                 }
-                Err(_) => {
-                    // Dereference fallback also failed, return the original parse error
+                Err(deref_err) => {
+                    // Dereference fallback also failed, return error with both details
                     let main_schema: value::Value =
                         serde_json::from_str(&registered_schema.schema).unwrap();
                     Err(SRCError::non_retryable_with_cause(
                         Schema::parse(&main_schema).unwrap_err(),
                         &format!(
-                            "Supplied raw value {:?} cant be turned into a Schema",
-                            registered_schema.schema
+                            "Supplied raw value {:?} cant be turned into a Schema (dereference fallback also failed: {})",
+                            registered_schema.schema,
+                            deref_err.error
                         ),
                     ))
                 }

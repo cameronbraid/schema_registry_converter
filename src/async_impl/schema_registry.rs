@@ -221,7 +221,9 @@ pub async fn get_dereferenced_schema_by_id(
         // If we can't derive it, fall back to appending /apis/registry/v3
         format!("{}/apis/registry/v3", base_url.trim_end_matches('/'))
     };
-    let url = format!("{}/ids/globalIds/{}?references=DEREFERENCE", v3_base, id);
+    // Try contentId first (used by Apicurio converter with use-id=contentId),
+    // fall back to globalId if contentId fails
+    let url = format!("{}/ids/contentIds/{}?references=DEREFERENCE", v3_base, id);
     let builder = sr_settings.client().get(&url);
     let call = apply_authentication(builder, sr_settings.authorization()).await;
     match call {
